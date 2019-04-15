@@ -9,18 +9,13 @@ import os.path
 
 import iris
 import matplotlib
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import numpy as np
 
-matplotlib.use('Agg')
 
 
 logging.basicConfig(level=logging.INFO)
-
-
-#MESH_FILE = '/nobackup/rossby18/sm_wyser/barakuda/ORCA1.L75_barakuda/mesh_mask.nc4'
-#MESH_FILE = '/nobackup/rossby20/rossby/joint_exp/ecearth/sm_klazi/ece-run/CTL3/mesh_mask.nc'
-MESH_FILE = '/nobackup/rossby21/rossby/joint_exp/crescendo/ece-run/MESH/mesh_mask.nc'
 
 
 class WikiTableWriter(object):
@@ -73,9 +68,9 @@ class WikiTableWriter(object):
         ))
 
 
-def read_mask(kind):
+def read_mask(mesh_mask, kind):
     name = '{}mask'.format(kind)
-    mask_cube = iris.load_cube(MESH_FILE, name)
+    mask_cube = iris.load_cube(mesh_mask, name)
     assert(mask_cube.ndim == 4)
     assert(mask_cube.shape[0] == 1)
     mask = mask_cube[0].data.astype('bool')
@@ -103,28 +98,32 @@ def build_wmask(tmask):
     return wmask
 
 
-def prepare_masks():
+def masks_load_tuv_build_w(mesh_mask):
+    logging.info('reading prepared uv masks')
     masks = {}
     for kind in ['t', 'u', 'v']:
-        name = '{}mask'.format(kind)
-        mask_cube = iris.load_cube(MESH_FILE, name)
-        assert(mask_cube.ndim == 4)
-        assert(mask_cube.shape[0] == 1)
-        mask = mask_cube[0].data.astype('bool')
-        masks[kind] = ~mask
+        masks[kind] = read_mask(mesh_mask, kind)
     masks['w'] = build_wmask(masks['t'])
     return masks
 
 
-# def prepare_masks():
-#     tmask = read_mask('t')
-#     masks = {
-#         't': tmask,
-#         'u': build_umask(tmask),
-#         'v': build_vmask(tmask),
-#         'w': build_wmask(tmask),
-#     }
-#     return masks
+def masks_load_t_build_uvw(mesh_mask):
+    logging.info('building my own uv masks')
+    tmask = read_mask(mesh_mask, 't')
+    masks = {
+        't': tmask,
+        'u': build_umask(tmask),
+        'v': build_vmask(tmask),
+        'w': build_wmask(tmask),
+    }
+    return masks
+
+
+def prepare_masks(mesh_mask, build_u_v_masks):
+    if build_u_v_masks:
+        return masks_load_t_build_uvw(mesh_mask)
+    else:
+        return masks_load_tuv_build_w(mesh_mask)
 
 
 def isbig(array):
@@ -247,13 +246,19 @@ def check_file(full_filename, masks, table_writer):
 
 def parse_args():
     parser = argparse.ArgumentParser()
+    parser.add_argument('-m', '--mesh-mask', default='mesh_mask.nc',
+                        help='location of mesh_mask file '
+                        '(default: ./mesh_mask.nc)')
+    parser.add_argument('-b', '--build-u-v-masks', action='store_true',
+                        help='build masks for u and v fields from the t mask '
+                        'instead of loading them from the mesh_mask file')
     parser.add_argument('files', nargs='+')
     return parser.parse_args()
 
 
 def main():
     args = parse_args()
-    masks = prepare_masks()
+    masks = prepare_masks(args.mesh_mask, args.build_u_v_masks)
     prefix = os.path.basename(os.path.commonprefix(args.files))
     tablefilename = '{}wikitable.txt'.format(prefix)
     with WikiTableWriter(tablefilename) as table_writer:
